@@ -1,0 +1,51 @@
+name: Validate skills
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate SKILL.md structure
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+
+          skills = sorted(Path("skills").glob("*/SKILL.md"))
+          if not skills:
+              raise SystemExit("no skills found")
+
+          for path in skills:
+              text = path.read_text(encoding="utf-8")
+              if not text.startswith("---\n"):
+                  raise SystemExit(f"{path}: missing YAML frontmatter")
+              try:
+                  _, frontmatter, body = text.split("---", 2)
+              except ValueError:
+                  raise SystemExit(f"{path}: malformed frontmatter")
+
+              name = re.search(r"(?m)^name:\s*(.+)$", frontmatter)
+              description = re.search(r"(?m)^description:\s*(.+)$", frontmatter)
+              if not name or not description:
+                  raise SystemExit(f"{path}: name/description required")
+
+              expected = path.parent.name
+              if name.group(1).strip() != expected:
+                  raise SystemExit(
+                      f"{path}: frontmatter name must match directory {expected!r}"
+                  )
+
+              for ref in re.findall(r"\]\((references/[^)]+)\)", body):
+                  target = path.parent / ref
+                  if not target.is_file():
+                      raise SystemExit(f"{path}: missing reference {ref}")
+
+          print(f"validated {len(skills)} skill(s)")
+
