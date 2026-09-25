@@ -1,6 +1,6 @@
 ---
 name: codex-context-optimization
-description: Optimize Codex CLI context-window usage, long-session context management, auto-compaction, and lazy App/MCP tool loading. Use when initial token usage is unexpectedly large, Apps/MCP tools consume too much context, tool_search/deferred loading needs enabling or verification, or experimental context rollover/token-budget behavior needs configuring or troubleshooting.
+description: Optimize Codex CLI context-window usage, long-session context management, auto-compaction, lazy App/MCP tool loading, and automatic approval reviewer model selection. Use when initial token usage is unexpectedly large, Apps/MCP tools consume too much context, tool_search/deferred loading needs enabling or verification, experimental context rollover/token-budget behavior needs configuring or troubleshooting, or auto-review approvals should use a specific model.
 metadata:
   short-description: Optimize Codex context and lazy tools
 ---
@@ -19,12 +19,14 @@ Use this skill when Codex spends a large fraction of the model context window be
 6. Re-run the same minimal prompt after each change and compare input tokens.
 7. For tool deferral, perform one real App/MCP call and verify a `tool_search_call` precedes the tool call.
 8. For experimental context management, verify the rollout contains `token_budget.context_window`; do not claim rollover is validated until a window actually changes.
+9. For automatic approval review, distinguish the approval reviewer from the ordinary `review_model`; use the model catalog's `auto_review_model_override` and verify the effective model metadata.
 
 Read [references/tutorial.md](references/tutorial.md) for the configuration, capability overrides, verification commands, measured example, rollback steps, and version caveats.
 
 ## Important boundaries
 
 - `supports_search_tool` and `supports_experimental_context` are model-catalog capabilities, not ordinary `config.toml` feature flags.
+- `auto_review_model_override` is also model-catalog metadata. It selects the automatic approval/Guardian reviewer for a parent model.
 - Custom catalog overrides are version-sensitive. Re-check them after Codex upgrades or model-catalog refreshes.
 - Do not reduce functionality by disabling all Apps merely to save tokens when deferred tool loading works.
 - Do not enable a capability only because its field exists. Validate one real request with the target model/provider.

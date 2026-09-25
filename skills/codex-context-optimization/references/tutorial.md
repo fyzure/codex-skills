@@ -1,11 +1,12 @@
 # Codex context optimization tutorial
 
-This guide covers two independent optimizations:
+This guide covers three independent areas:
 
 1. **Experimental long-session context management** — token-budget metadata, context-window identity, rollover support, and the newer auto-compaction accounting mode.
 2. **Deferred App/MCP tool loading** — keep integrations available without injecting hundreds of tool schemas into the first model request.
+3. **Automatic approval reviewer selection** — route approval/Guardian review to a chosen model such as GPT-6 Luna.
 
-The examples were validated against Codex CLI `0.158.0-alpha.8` on 2026-09-25. Both areas are evolving. Always verify the effective behavior of the installed Codex version.
+The examples were validated against Codex CLI `0.158.0-alpha.8` on 2026-09-25. These areas are evolving. Always verify the effective behavior of the installed Codex version.
 
 ## 1. Establish a baseline
 
@@ -243,7 +244,89 @@ tool_search_call
 
 This proves the App remains usable while its full tool schema is omitted from the first request.
 
-## 4. Optional additional trimming
+## 4. Set the automatic approval reviewer to GPT-6 Luna
+
+Codex has more than one concept containing the word “review”. Do not use the ordinary `review_model` setting for this purpose.
+
+- `review_model` is used by the explicit code-review/review workflow.
+- automatic approval review is selected by the Guardian/approval reviewer path.
+- the parent model's `auto_review_model_override` takes precedence over the provider's default automatic-review model.
+
+Current upstream Codex uses `codex-auto-review` as the default preferred approval-review model when no model-specific override is present. A custom model catalog can replace that choice per parent model.
+
+### 4.1 Enable automatic approval review
+
+In `config.toml`:
+
+```toml
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+```
+
+This routes eligible approval requests through automatic review rather than directly to the user.
+
+### 4.2 Override the reviewer model in the model catalog
+
+For each parent model that should use GPT-6 Luna as its approval reviewer, set:
+
+```json
+{
+  "auto_review_model_override": "gpt-6-luna"
+}
+```
+
+For example, if GPT-5.6 Luna/Sol/Terra and GPT-6 Luna/Sol/Astra should all use the same automatic reviewer, apply the field to each corresponding model entry.
+
+The reviewer model itself must be present in the effective model catalog. Do not point the override at an alias that `codex debug models` cannot resolve.
+
+### 4.3 Verify the effective override
+
+Run:
+
+```bash
+codex debug models
+```
+
+Inspect the parent model entry and confirm:
+
+```text
+auto_review_model_override = gpt-6-luna
+```
+
+If the output is JSON, a small local inspection is convenient:
+
+```bash
+codex debug models |
+python3 -c '
+import json, sys
+d=json.load(sys.stdin)
+for m in d.get("models", []):
+    if m.get("slug") in {
+        "gpt-5.6-luna","gpt-5.6-sol","gpt-5.6-terra",
+        "gpt-6-luna","gpt-6-sol","gpt-6-astra",
+    }:
+        print(m.get("slug"), m.get("auto_review_model_override"))
+'
+```
+
+Expected output is the parent-model slug followed by `gpt-6-luna`.
+
+### 4.4 Why not use `review_model`?
+
+The approval/Guardian reviewer resolves its model from:
+
+1. the parent model's `auto_review_model_override`, when present;
+2. otherwise the provider's preferred automatic-review model.
+
+The separate `review_model` configuration belongs to the explicit review workflow and does not replace this approval-reviewer selection path.
+
+### 4.5 Roll back the reviewer override
+
+To return to the provider/default reviewer, remove `auto_review_model_override` from the affected model entries or restore the previous catalog backup.
+
+If automatic approval review itself should be disabled, change `approvals_reviewer` back to the desired non-auto-review policy rather than merely removing the model override.
+
+## 5. Optional additional trimming
 
 ### Disable genuinely unused plugins
 
@@ -270,12 +353,14 @@ enabled = false
 
 Keep one canonical copy visible.
 
-## 5. Recommended combined configuration
+## 6. Recommended combined configuration
 
 The ordinary configuration portion can look like:
 
 ```toml
 model_auto_compact_token_limit_scope = "body_after_prefix"
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
 
 [features.context_management]
 experimental_mode = true
@@ -289,13 +374,14 @@ Then, in the custom model catalog for each validated target model:
 ```json
 {
   "supports_experimental_context": true,
-  "supports_search_tool": true
+  "supports_search_tool": true,
+  "auto_review_model_override": "gpt-6-luna"
 }
 ```
 
 The catalog fields are deliberately shown separately because they are model metadata, not normal `config.toml` keys.
 
-## 6. Rollback
+## 7. Rollback
 
 Always keep backups before editing:
 
@@ -315,9 +401,14 @@ To roll back deferred tool loading:
 
 - restore the original `supports_search_tool` value for the affected model aliases.
 
+To roll back the automatic reviewer model:
+
+- remove or restore `auto_review_model_override` for the affected parent models;
+- keep or change `approvals_reviewer` independently, depending on whether automatic review itself is still desired.
+
 After rollback, start a fresh session and re-run the baseline.
 
-## 7. Upgrade checklist
+## 8. Upgrade checklist
 
 After any Codex CLI or model-catalog update:
 
@@ -328,9 +419,10 @@ After any Codex CLI or model-catalog update:
 5. Run the minimal first-turn A/B check.
 6. Make one real deferred App/MCP call.
 7. For context management, verify `token_budget.context_window` still appears.
-8. Remove local overrides that upstream now supplies correctly.
+8. Confirm the intended parent models still report `auto_review_model_override = gpt-6-luna`.
+9. Remove local overrides that upstream now supplies correctly.
 
-## 8. Upstream implementation references
+## 9. Upstream implementation references
 
 Useful source locations in the OpenAI Codex repository:
 
@@ -339,6 +431,9 @@ Useful source locations in the OpenAI Codex repository:
 - `codex-rs/core/src/tools/handlers/tool_search.rs` — tool-search handling.
 - `codex-rs/core/src/mcp_tool_exposure_test.rs` — direct versus deferred MCP/App exposure behavior.
 - `codex-rs/core/src/connectors.rs` — connector discovery and tool-suggest integration.
+- `codex-rs/model-provider/src/provider.rs` — provider default approval-review model.
+- `codex-rs/ext/guardian-reviewer/src/model.rs` — approval-review model selection and `auto_review_model_override`.
+- `codex-rs/core/src/session/review.rs` — separate explicit review workflow and `review_model`.
 - `codex-rs/core/config.schema.json` — current configuration schema.
 
 Prefer the installed version's behavior over assumptions from a newer `main` branch.
